@@ -1,19 +1,18 @@
-from typing import Dict, Tuple
 import math
 
 from jellyfish import levenshtein_distance
 
+from ...data_sources.base_table import BaseTable
+from ...utils.utils import normalize_distance
+from ..base_matcher import BaseMatcher
+from ..match import Match
 from .graph import Graph
 from .node_pair import NodePair
 from .propagation_graph import PropagationGraph
-from ..match import Match
-from ..base_matcher import BaseMatcher
-from ...data_sources.base_table import BaseTable
-from ...utils.utils import normalize_distance
 
 
 class SimilarityFlooding(BaseMatcher):
-    def __init__(self, coeff_policy='inverse_average', formula='formula_c'):
+    def __init__(self, coeff_policy="inverse_average", formula="formula_c"):
         self.__coeff_policy = coeff_policy
         self.__formula = formula
         self.__graph1 = None
@@ -21,10 +20,8 @@ class SimilarityFlooding(BaseMatcher):
         self.__initial_map = None
 
     def get_matches(
-        self,
-        source_input: BaseTable,
-        target_input: BaseTable
-    ) -> Dict[Tuple[Tuple[str, str], Tuple[str, str]], float]:
+        self, source_input: BaseTable, target_input: BaseTable
+    ) -> dict[tuple[tuple[str, str], tuple[str, str]], float]:
         self.__graph1 = Graph(source_input).graph
         self.__graph2 = Graph(target_input).graph
         self.__calculate_initial_mapping()
@@ -50,31 +47,28 @@ class SimilarityFlooding(BaseMatcher):
     @staticmethod
     def __get_euc_residual_vector(previous_map, next_map):
         keys = set(previous_map) | set(next_map)
-        return math.sqrt(
-            sum((previous_map.get(k, 0) - next_map.get(k, 0)) ** 2 for k in keys)
-        )
+        return math.sqrt(sum((previous_map.get(k, 0) - next_map.get(k, 0)) ** 2 for k in keys))
 
     def __get_next_map(self, previous_map, p_graph, formula):
         next_map = {}
         max_val = 0
         init_map = self.__initial_map
         for n in p_graph.nodes():
-            if formula == 'formula_a':
+            if formula == "formula_a":
                 map_sim = init_map[n]
-            elif formula == 'formula_b':
+            elif formula == "formula_b":
                 map_sim = 0
             else:
                 map_sim = previous_map[n]
             for e in p_graph.in_edges(n):
-                w = p_graph.get_edge_data(e[0], e[1]).get('weight')
-                if formula in ('formula_a', 'basic'):
+                w = p_graph.get_edge_data(e[0], e[1]).get("weight")
+                if formula in ("formula_a", "basic"):
                     map_sim += w * previous_map[e[0]]
-                elif formula == 'formula_b':
+                elif formula == "formula_b":
                     map_sim += w * init_map[e[0]]
                 else:
                     map_sim += init_map[e[0]] + w * (previous_map[e[0]] + init_map[e[0]])
-            if map_sim > max_val:
-                max_val = map_sim
+            max_val = max(max_val, map_sim)
             next_map[n] = map_sim
         inv_max = 1.0 / max_val if max_val > 0 else 1.0
         for k in next_map:
@@ -92,18 +86,18 @@ class SimilarityFlooding(BaseMatcher):
                 previous_map = next_map.copy()
             return previous_map
 
-        if self.__formula == 'basic':
+        if self.__formula == "basic":
             return iterate(self.__initial_map.copy(), self.__formula, num_iter)
 
-        if self.__formula == 'formula_a':
+        if self.__formula == "formula_a":
             return iterate(self.__initial_map.copy(), self.__formula, num_iter)
 
-        if self.__formula == 'formula_b':
+        if self.__formula == "formula_b":
             first = self.__get_next_map(None, p_g, self.__formula)
             return iterate(first.copy(), self.__formula, num_iter - 1)
 
-        if self.__formula == 'formula_c':
-            start = self.__get_next_map(self.__initial_map.copy(), p_g, 'formula_b')
+        if self.__formula == "formula_c":
+            start = self.__get_next_map(self.__initial_map.copy(), p_g, "formula_b")
             return iterate(start.copy(), self.__formula, num_iter - 1)
 
         print("Wrong formula option!")
@@ -115,29 +109,29 @@ class SimilarityFlooding(BaseMatcher):
         g1_out_edges = self.__graph1.out_edges
         g2_out_edges = self.__graph2.out_edges
 
-        for key in prev_map.keys():
+        for key in prev_map:
             n1 = key.node1
             n2 = key.node2
-            if not n1.name.startswith('NodeID'):
+            if not n1.name.startswith("NodeID"):
                 filtered.pop(key, None)
                 continue
 
             edges = g1_out_edges(n1) if n1 in g1_nodes else g2_out_edges(n1)
-            if not any(e[1].name == 'Column' for e in edges):
+            if not any(e[1].name == "Column" for e in edges):
                 filtered.pop(key, None)
                 continue
 
-            if not n2.name.startswith('NodeID'):
+            if not n2.name.startswith("NodeID"):
                 filtered.pop(key, None)
                 continue
 
             edges = g1_out_edges(n2) if n2 in g1_nodes else g2_out_edges(n2)
-            if not any(e[1].name == 'Column' for e in edges):
+            if not any(e[1].name == "Column" for e in edges):
                 filtered.pop(key, None)
 
         return filtered
 
-    def __format_output(self, matches) -> Dict[Tuple[Tuple[str, str], Tuple[str, str]], float]:
+    def __format_output(self, matches) -> dict[tuple[tuple[str, str], tuple[str, str]], float]:
         output = {}
         sorted_maps = sorted(matches.items(), key=lambda item: -item[1])
         for key, sim in sorted_maps:
@@ -162,6 +156,6 @@ class SimilarityFlooding(BaseMatcher):
             edges = g2_out_edges(node)
             get_data = self.__graph2.get_edge_data
         for e in edges:
-            if get_data(e[0], e[1]).get('label') == "name":
+            if get_data(e[0], e[1]).get("label") == "name":
                 return e[1].long_name
         return None

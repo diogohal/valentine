@@ -1,13 +1,12 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from ..algorithms.matcher_results import MatcherResults
-from typing import Tuple, List
 
 
-def get_tp_fn(matches: MatcherResults,
-              ground_truth: List[Tuple[str, str]],
-              n: int | None = None):
+def get_tp_fn(matches: MatcherResults, ground_truth: list[tuple[str, str]], n: int | None = None):
     """Counts the amount of true positives and the amount of false
     negatives among the matches in the given MatcherResults.
 
@@ -31,7 +30,7 @@ def get_tp_fn(matches: MatcherResults,
     fn = 0
 
     matches_dict = matches.get_copy()
-    all_matches = [(m[0][1], m[1][1]) for m in matches_dict.keys()]
+    all_matches = [(m[0][1], m[1][1]) for m in matches_dict]
 
     if n is not None:
         all_matches = all_matches[:n]
@@ -45,9 +44,7 @@ def get_tp_fn(matches: MatcherResults,
     return tp, fn
 
 
-def get_fp(matches: MatcherResults,
-           ground_truth: List[Tuple[str, str]],
-           n: int | None = None):
+def get_fp(matches: MatcherResults, ground_truth: list[tuple[str, str]], n: int | None = None):
     """Counts the amount of false positives among the matches in the
     given MatcherResults.
 
@@ -69,7 +66,7 @@ def get_fp(matches: MatcherResults,
     """
     fp = 0
     matches_dict = matches.get_copy()
-    all_matches = [(m[0][1], m[1][1]) for m in matches_dict.keys()]
+    all_matches = [(m[0][1], m[1][1]) for m in matches_dict]
 
     if n is not None:
         all_matches = all_matches[:n]
