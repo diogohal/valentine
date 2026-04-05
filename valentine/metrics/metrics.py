@@ -20,6 +20,9 @@ __all__ = [
     "PrecisionTopNPercent",
     "Recall",
     "RecallAtSizeofGroundTruth",
+    "PersistentAccuracy",
+    "MissingAccuracy",
+    "NewAccuracy",
 ]
 
 # Ground truth can be either (source_col, target_col) name pairs or
@@ -156,3 +159,106 @@ class RecallAtSizeofGroundTruth(Metric):
         tp, fn = get_tp_fn(n_matches, ground_truth)
         recall = _safe_div(tp, tp + fn)
         return self.return_format(recall)
+
+
+@dataclass(eq=True, frozen=True)
+class PersistentAccuracy(Metric):
+    """Accuracy over persistent columns — columns whose name appears on both
+    sides of the ground truth (i.e. self-matches such as ("A", "A")).
+
+    For each such column the metric checks whether at least one predicted match
+    maps that column to itself (same column name on both the source and target
+    side).  The score is ``correct / total``, where *total* is the number of
+    persistent columns derived from the ground truth.
+
+    Returns ``-1.0`` when no persistent columns are found in the ground truth.
+    """
+
+    def apply(self, matches: Any, ground_truth: GroundTruth) -> dict[str, float]:
+        persistent_cols = {src for src, tgt in ground_truth if src == tgt}
+
+        total = len(persistent_cols)
+        if total == 0:
+            return self.return_format(-1.0)
+
+        # Build a set of (source_col_name, target_col_name) pairs present in matches.
+        predicted_pairs = {(key.source_column, key.target_column) for key in matches}
+
+        correct = sum(
+            1 for col in persistent_cols if (col, col) in predicted_pairs
+        )
+        return self.return_format(_safe_div(correct, total))
+
+
+@dataclass(eq=True, frozen=True)
+class MissingAccuracy(Metric):
+    """Accuracy over missing columns — source columns that have no counterpart
+    in the target schema (i.e. columns absent from the ground truth source side).
+
+    A missing column is considered *correctly identified* when it does not appear
+    as a source column in any predicted match.  The score is
+    ``correctly_absent / total_missing``.
+
+    Returns ``-1.0`` when no missing columns are found.
+
+    Attributes
+    ----------
+    source_columns : tuple[str, ...]
+        All column names present in the source table.
+    """
+
+    source_columns: tuple[str, ...] = ()
+
+    def apply(self, matches: Any, ground_truth: GroundTruth) -> dict[str, float]:
+        ground_truth_sources = {src for src, _ in ground_truth}
+        missing_cols = set(self.source_columns) - ground_truth_sources
+
+        total = len(missing_cols)
+        if total == 0:
+            return self.return_format(-1.0)
+
+        # Source column names that appear in at least one predicted match.
+        predicted_sources = {key.source_column for key in matches}
+
+        correctly_absent = sum(
+            1 for col in missing_cols if col not in predicted_sources
+        )
+        return self.return_format(_safe_div(correctly_absent, total))
+
+
+@dataclass(eq=True, frozen=True)
+class NewAccuracy(Metric):
+    """Accuracy over new columns — target columns that have no counterpart in
+    the source schema (i.e. columns absent from the ground truth target side).
+
+    A new column is considered *correctly identified* when it does not appear
+    as a target column in any predicted match.  The score is
+    ``correctly_absent / total_new``.
+
+    Returns ``-1.0`` when no new columns are found.
+
+    Attributes
+    ----------
+    target_columns : tuple[str, ...]
+        All column names present in the target table.
+    """
+
+    target_columns: tuple[str, ...] = ()
+
+    def apply(self, matches: Any, ground_truth: GroundTruth) -> dict[str, float]:
+        ground_truth_targets = {tgt for _, tgt in ground_truth}
+        new_cols = set(self.target_columns) - ground_truth_targets
+
+        total = len(new_cols)
+        if total == 0:
+            return self.return_format(-1.0)
+
+        # Target column names that appear in at least one predicted match.
+        predicted_targets = {key.target_column for key in matches}
+
+        correctly_absent = sum(
+            1 for col in new_cols if col not in predicted_targets
+        )
+        return self.return_format(_safe_div(correctly_absent, total))
+
+
