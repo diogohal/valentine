@@ -190,9 +190,35 @@ class MatcherResults(Mapping):
         MatcherResults
             A new instance with only the top ``n`` matches.
         """
-        top_items = dict(list(self._data.items())[:n])
-        filtered_details = {k: v for k, v in self._details.items() if k in top_items}
-        return MatcherResults(top_items, details=filtered_details)
+        matches = self.get_copy()
+        matches = dict(sorted(matches.items(), key=lambda x: x[1], reverse=True)[:n])
+        return MatcherResults(matches)
+    
+    def take_top_n_per_source(self: MatcherResults, n: int) -> MatcherResults:
+        """Summary
+        Takes the top 'n' matches per source column and returns a new
+        MatcherResults containing only these matches.
+
+        Parameters
+        ----------
+        n : int
+            Number of matches to keep per source column.
+
+        Returns
+        -------
+        MatcherResults
+            Matcher results containing only the
+            top 'n' matches per source column.
+        """
+        matches = self.get_copy()
+        counts = {}
+        filtered = {}
+        for key, score in matches.items():
+            source = key[0]
+            if counts.get(source, 0) < n:
+                filtered[key] = score
+                counts[source] = counts.get(source, 0) + 1
+        return MatcherResults(filtered)
 
     def take_top_n_per_source(self, n: int) -> MatcherResults:
         """Keep the top ``n`` matches per source column.
