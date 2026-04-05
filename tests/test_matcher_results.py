@@ -106,6 +106,26 @@ class TestMatcherResults(unittest.TestCase):
         take_more_than_all = self.matches.take_top_n(len(self.matches) + 1)
         assert len(take_more_than_all) == len(self.matches)
 
+    def test_take_top_n_per_source(self):
+        take_none = self.matches.take_top_n_per_source(0)
+        assert len(take_none) == 0
+
+        for n in range(1, len(self.ground_truth) + 1):
+            result = self.matches.take_top_n_per_source(n)
+            assert len(result) <= len(self.matches)
+
+            counts: dict[tuple[str, str], int] = {}
+            for pair in result:
+                counts[pair.source] = counts.get(pair.source, 0) + 1
+            for count in counts.values():
+                assert count <= n
+
+        take_all = self.matches.take_top_n_per_source(len(self.matches))
+        assert len(take_all) == len(self.matches)
+
+        take_more_than_all = self.matches.take_top_n_per_source(len(self.matches) + 1)
+        assert len(take_more_than_all) == len(self.matches)
+
     def test_copy(self):
         copy = self.matches.get_copy()
         assert copy is not self.matches

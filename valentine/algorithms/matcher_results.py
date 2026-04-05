@@ -194,6 +194,29 @@ class MatcherResults(Mapping):
         filtered_details = {k: v for k, v in self._details.items() if k in top_items}
         return MatcherResults(top_items, details=filtered_details)
 
+    def take_top_n_per_source(self, n: int) -> MatcherResults:
+        """Keep the top ``n`` matches per source column.
+
+        Parameters
+        ----------
+        n : int
+            Number of matches to keep per source column.
+
+        Returns
+        -------
+        MatcherResults
+            A new instance with only the top ``n`` matches per source column.
+        """
+        counts: dict[tuple[str, str], int] = {}
+        filtered: dict[ColumnPair, float] = {}
+        for key, score in self._data.items():
+            source = key.source
+            if counts.get(source, 0) < n:
+                filtered[key] = score
+                counts[source] = counts.get(source, 0) + 1
+        filtered_details = {k: v for k, v in self._details.items() if k in filtered}
+        return MatcherResults(filtered, details=filtered_details)
+
     # -- Metrics -----------------------------------------------------------
 
     def get_metrics(
