@@ -5,6 +5,9 @@ from .metrics import (
     PrecisionTopNPercent,
     Recall,
     RecallAtSizeofGroundTruth,
+    PersistentAccuracy,
+    MissingAccuracy,
+    NewAccuracy,
 )
 
 __all__ = [
