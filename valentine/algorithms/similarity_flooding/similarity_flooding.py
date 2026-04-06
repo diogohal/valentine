@@ -1,8 +1,10 @@
 import math
+from itertools import combinations
 
 from ...data_sources.base_table import BaseTable
 from ..base_matcher import BaseMatcher
 from ..match import Match
+from . import Formula, Policy, StringMatcher
 from .graph import Graph
 from .node_pair import NodePair
 from .propagation_graph import PropagationGraph
@@ -15,24 +17,49 @@ from .string_matcher import (
 
 
 class SimilarityFlooding(BaseMatcher):
+    """Python implementation of the Similarity Flooding schema matcher.
+
+    Similarity Flooding (Melnik, Garcia-Molina, Rahm — ICDE 2002) treats
+    each schema as a labelled graph and iteratively propagates an initial
+    element-level similarity across the graph structure until a fixpoint
+    is reached.
+
+    Parameters
+    ----------
+    coeff_policy : Policy, optional
+        Coefficient policy for the propagation graph. One of
+        :attr:`Policy.INVERSE_AVERAGE` (default) or
+        :attr:`Policy.INVERSE_PRODUCT`.
+    formula : Formula, optional
+        Fixpoint iteration formula. One of :attr:`Formula.BASIC`,
+        :attr:`Formula.FORMULA_A`, :attr:`Formula.FORMULA_B`, or
+        :attr:`Formula.FORMULA_C` (default).
+    string_matcher : StringMatcher, optional
+        String similarity function used for the initial element-level
+        mapping. One of :attr:`StringMatcher.PREFIX_SUFFIX` (default),
+        :attr:`StringMatcher.PREFIX_SUFFIX_TFIDF`, or
+        :attr:`StringMatcher.LEVENSHTEIN`.
+    tfidf_corpus : list[BaseTable] | None, optional
+        Additional tables to include when computing IDF weights for the
+        ``PREFIX_SUFFIX_TFIDF`` matcher. Ignored for other string matchers.
+    """
+
     def __init__(
         self,
-        coeff_policy="inverse_average",
-        formula="formula_c",
-        string_matcher="prefix_suffix",
+        coeff_policy: Policy = Policy.INVERSE_AVERAGE,
+        formula: Formula = Formula.FORMULA_C,
+        string_matcher: StringMatcher = StringMatcher.PREFIX_SUFFIX,
         tfidf_corpus: list[BaseTable] | None = None,
     ):
-        self.__coeff_policy = coeff_policy
-        self.__formula = formula
-        self.__string_matcher = string_matcher
+        self.__coeff_policy = Policy(coeff_policy)
+        self.__formula = Formula(formula)
+        self.__string_matcher = StringMatcher(string_matcher)
         self.__tfidf_corpus = tfidf_corpus or []
         self.__graph1 = None
         self.__graph2 = None
         self.__initial_map = None
 
-    def get_matches(
-        self, source_input: BaseTable, target_input: BaseTable
-    ) -> dict[tuple[tuple[str, str], tuple[str, str]], float]:
+    def get_matches(self, source_input: BaseTable, target_input: BaseTable) -> dict:
         self.__graph1 = Graph(source_input).graph
         self.__graph2 = Graph(target_input).graph
         self.__calculate_initial_mapping()
@@ -40,21 +67,52 @@ class SimilarityFlooding(BaseMatcher):
         filtered_matches = self.__filter_map(matches)
         return self.__format_output(filtered_matches)
 
-    def __calculate_initial_mapping(self):
-        if self.__string_matcher == "prefix_suffix_tfidf":
-            # Collect non-NodeID node names from both graphs for IDF computation.
-            # Include corpus tables so IDF reflects the full schema vocabulary
-            # (e.g. the paper's G2 contains both Employee and Department tables).
-            all_nodes = list(self.__graph1.nodes()) + list(self.__graph2.nodes())
-            for table in self.__tfidf_corpus:
-                all_nodes.extend(Graph(table).graph.nodes())
+    def get_matches_batch(self, tables: list[BaseTable]):
+        """
+        Override that computes IDF weights from ALL tables at once when using
+        the ``PREFIX_SUFFIX_TFIDF`` string matcher, so that token frequencies
+        reflect the full schema vocabulary rather than only a single pair.
+        """
+        graphs = [(table, Graph(table).graph) for table in tables]
+
+        # Precompute global IDF weights from all tables
+        precomputed_idf = None
+        if self.__string_matcher is StringMatcher.PREFIX_SUFFIX_TFIDF:
+            all_nodes = []
+            for _, g in graphs:
+                all_nodes.extend(g.nodes())
             all_names = [n.name for n in all_nodes if not n.name.startswith("NodeID")]
-            idf_weights = compute_idf_weights(all_names)
+            precomputed_idf = compute_idf_weights(all_names)
+
+        matches = {}
+        for (_t1, g1), (_t2, g2) in combinations(graphs, 2):
+            self.__graph1 = g1
+            self.__graph2 = g2
+            self.__calculate_initial_mapping(precomputed_idf)
+            pair_matches = self.__fixpoint_computation(100, 1e-4)
+            filtered = self.__filter_map(pair_matches)
+            matches.update(self.__format_output(filtered))
+
+        return matches
+
+    def __calculate_initial_mapping(self, precomputed_idf=None):
+        if self.__string_matcher is StringMatcher.PREFIX_SUFFIX_TFIDF:
+            if precomputed_idf is not None:
+                idf_weights = precomputed_idf
+            else:
+                # Collect non-NodeID node names from both graphs for IDF computation.
+                # Include corpus tables so IDF reflects the full schema vocabulary
+                # (e.g. the paper's G2 contains both Employee and Department tables).
+                all_nodes = list(self.__graph1.nodes()) + list(self.__graph2.nodes())
+                for table in self.__tfidf_corpus:
+                    all_nodes.extend(Graph(table).graph.nodes())
+                all_names = [n.name for n in all_nodes if not n.name.startswith("NodeID")]
+                idf_weights = compute_idf_weights(all_names)
 
             def sim_fn(s1, s2):
                 return prefix_suffix_tfidf(s1, s2, idf_weights)
 
-        elif self.__string_matcher == "prefix_suffix":
+        elif self.__string_matcher is StringMatcher.PREFIX_SUFFIX:
             sim_fn = prefix_suffix_tokenized
         else:
             sim_fn = levenshtein_sim
@@ -81,21 +139,21 @@ class SimilarityFlooding(BaseMatcher):
         max_val = 0
         init_map = self.__initial_map
         for n in p_graph.nodes():
-            if formula == "formula_a":
+            if formula is Formula.FORMULA_A:
                 map_sim = init_map[n]
-            elif formula == "formula_b":
+            elif formula is Formula.FORMULA_B:
                 map_sim = 0
-            elif formula == "formula_c":
+            elif formula is Formula.FORMULA_C:
                 map_sim = init_map[n] + previous_map[n]
-            else:  # basic
+            else:  # BASIC
                 map_sim = previous_map[n]
             for e in p_graph.in_edges(n):
                 w = p_graph.get_edge_data(e[0], e[1]).get("weight")
-                if formula in ("formula_a", "basic"):
+                if formula in (Formula.FORMULA_A, Formula.BASIC):
                     map_sim += w * previous_map[e[0]]
-                elif formula == "formula_b":
+                elif formula is Formula.FORMULA_B:
                     map_sim += w * (init_map[e[0]] + previous_map.get(e[0], 0))
-                elif formula == "formula_c":
+                elif formula is Formula.FORMULA_C:
                     map_sim += w * (init_map[e[0]] + previous_map[e[0]])
             max_val = max(max_val, map_sim)
             next_map[n] = map_sim
@@ -115,11 +173,7 @@ class SimilarityFlooding(BaseMatcher):
                 previous_map = next_map.copy()
             return previous_map
 
-        if self.__formula in ("basic", "formula_a", "formula_b", "formula_c"):
-            return iterate(self.__initial_map.copy(), self.__formula, num_iter)
-
-        print("Wrong formula option!")
-        return {}
+        return iterate(self.__initial_map.copy(), self.__formula, num_iter)
 
     def __filter_map(self, prev_map):
         filtered = prev_map.copy()
@@ -149,7 +203,7 @@ class SimilarityFlooding(BaseMatcher):
 
         return filtered
 
-    def __format_output(self, matches) -> dict[tuple[tuple[str, str], tuple[str, str]], float]:
+    def __format_output(self, matches) -> dict:
         output = {}
         sorted_maps = sorted(matches.items(), key=lambda item: -item[1])
         for key, sim in sorted_maps:

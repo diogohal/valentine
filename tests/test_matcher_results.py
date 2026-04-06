@@ -1,24 +1,34 @@
 import math
 import unittest
+from collections.abc import Mapping
 
 from tests import df1, df2
 from valentine import valentine_match
-from valentine.algorithms import JaccardDistanceMatcher
+from valentine.algorithms import ColumnPair, JaccardDistanceMatcher
 from valentine.algorithms.matcher_results import MatcherResults
 from valentine.metrics import Precision
 
 
 class TestMatcherResults(unittest.TestCase):
     def setUp(self):
-        self.matches = valentine_match(df1, df2, JaccardDistanceMatcher())
+        self.matches = valentine_match([df1, df2], JaccardDistanceMatcher())
         self.ground_truth = [
-            ("Cited by", "Cited by"),
-            ("Authors", "Authors"),
-            ("EID", "EID"),
+            ("emp_id", "employee_number"),
+            ("fname", "first_name"),
+            ("lname", "last_name"),
+            ("dept", "department"),
+            ("annual_salary", "compensation"),
+            ("hire_date", "start_date"),
+            ("office_loc", "work_location"),
         ]
 
-    def test_dict(self):
-        assert isinstance(self.matches, dict)
+    def test_is_mapping(self):
+        assert isinstance(self.matches, Mapping)
+
+    def test_is_not_mutable_dict(self):
+        # MatcherResults should not support mutation
+        assert not hasattr(self.matches, "update")
+        assert not hasattr(self.matches, "pop")
 
     def test_get_metrics(self):
         metrics = self.matches.get_metrics(self.ground_truth)
@@ -29,32 +39,45 @@ class TestMatcherResults(unittest.TestCase):
 
     def test_one_to_one(self):
         m = self.matches
+        n = len(m)
+        assert n > 0
 
-        # Add multiple matches per column
-        pairs = list(m.keys())
-        for (ta, ca), (tb, cb) in pairs:
-            m[((ta, ca), (tb, cb + "foo"))] = m[((ta, ca), (tb, cb))] / 2
+        # Build a new MatcherResults with duplicate (lower-score) entries
+        extended = dict(m)
+        for pair in list(m):
+            dup = ColumnPair(
+                pair.source_table,
+                pair.source_column,
+                pair.target_table,
+                pair.target_column + "foo",
+            )
+            extended[dup] = m[pair] / 2
+        m = MatcherResults(extended)
 
-        # Verify that len gets corrected from 6 to 3
+        assert len(m) == 2 * n
+
         m_one_to_one = m.one_to_one()
-        assert len(m_one_to_one) == 3 and len(m) == 6
+        # one_to_one should remove duplicates, returning fewer entries
+        assert len(m_one_to_one) <= n
+        assert len(m_one_to_one) < len(m)
 
-        # Verify that none of the lower similarity "foo" entries made it
-        for (ta, ca), (tb, cb) in pairs:
-            assert ((ta, ca), (tb, cb + "foo")) not in m_one_to_one
+        # None of the lower-similarity "foo" entries should survive
+        for pair in m_one_to_one:
+            assert not pair.target_column.endswith("foo")
 
-        # Verify that the cache resets on a new MatcherResults instance
-        m_entry = MatcherResults(m)
+        # Cache resets on new instance
+        m_entry = MatcherResults(dict(m))
         assert m_entry._cached_one_to_one is None
 
-        # Add one new entry with lower similarity
-        m_entry[(("table_1", "BLA"), ("table_2", "BLA"))] = 0.7214057
+        # Add a new entry with distinct columns
+        ext2 = dict(m_entry)
+        ext2[ColumnPair("extra_src", "BLA", "extra_tgt", "BLA")] = 0.7214057
+        m_entry = MatcherResults(ext2)
 
-        # Verify that the new one_to_one is different from the old one
         m_entry_one_to_one = m_entry.one_to_one()
         assert m_one_to_one != m_entry_one_to_one
 
-        # Verify that all remaining values are above the median
+        # All remaining values should be above the median
         median = sorted(m_entry.values(), reverse=True)[math.ceil(len(m_entry) / 2)]
         for k in m_entry_one_to_one:
             assert m_entry_one_to_one[k] >= median
@@ -63,8 +86,9 @@ class TestMatcherResults(unittest.TestCase):
         take_0_percent = self.matches.take_top_percent(0)
         assert len(take_0_percent) == 0
 
+        n = len(self.matches)
         take_40_percent = self.matches.take_top_percent(40)
-        assert len(take_40_percent) == 2
+        assert len(take_40_percent) == math.ceil(n * 0.4)
 
         take_100_percent = self.matches.take_top_percent(100)
         assert len(take_100_percent) == len(self.matches)
@@ -83,4 +107,17 @@ class TestMatcherResults(unittest.TestCase):
         assert len(take_more_than_all) == len(self.matches)
 
     def test_copy(self):
-        assert self.matches.get_copy() is not self.matches
+        copy = self.matches.get_copy()
+        assert copy is not self.matches
+        assert dict(copy) == dict(self.matches)
+
+    def test_column_pair_named_access(self):
+        """ColumnPair fields are accessible by name."""
+        pair = next(iter(self.matches))
+        assert isinstance(pair, ColumnPair)
+        assert isinstance(pair.source_table, str)
+        assert isinstance(pair.source_column, str)
+        assert isinstance(pair.target_table, str)
+        assert isinstance(pair.target_column, str)
+        assert pair.source == (pair.source_table, pair.source_column)
+        assert pair.target == (pair.target_table, pair.target_column)

@@ -16,32 +16,30 @@ from .clustering_utils import (
 
 
 class DistributionBased(BaseMatcher):
-    """
-    A class that contains the data and methods required for the algorithms proposed in
-    "Automatic Discovery of Attributes in Relational Databases" from M. Zhang et al. [1]
+    """Distribution-based column matching.
 
-    Attributes
+    Implementation of the algorithm from *Automatic Discovery of Attributes
+    in Relational Databases* (Zhang et al., SIGMOD 2011). Columns are
+    compared by quantile histograms of their value distributions; Earth
+    Mover's Distance drives the ranking of matches within each cluster.
+
+    Parameters
     ----------
-    __threshold1: float
-        The threshold for phase 1
-    __threshold2: float
-        The threshold for phase 2
-    __quantiles: int
-        the number of quantiles of the histograms
-    __process_num: int
-        The number of processes to spawn
-    __use_bloom_filters: bool
-        Whether to use Bloom filters for approximate intersection in phase 2
-
-    Methods
-    -------
-    find_matches(pool, chunk_size)
-         A dictionary with matches and their similarity
-
-    rank_output(attribute_clusters)
-        Take the attribute clusters that the algorithm produces and give a ranked list of matches based on the the EMD
-        between each pair inside an attribute cluster
-
+    threshold1 : float, optional
+        Distance threshold used in phase 1 (distribution clustering), in
+        ``[0, 1]`` (default: ``0.15``).
+    threshold2 : float, optional
+        Distance threshold used in phase 2 (attribute clustering), in
+        ``[0, 1]`` (default: ``0.15``).
+    quantiles : int, optional
+        Number of quantiles used for histogram summaries (must be ``>= 1``,
+        default: ``256``).
+    process_num : int, optional
+        Number of worker processes (must be ``>= 1``, default: ``1``).
+    use_bloom_filters : bool, optional
+        When ``True``, use Bloom filters for approximate set intersection
+        in phase 2 (Section 4 of the paper). Trades a small false-positive
+        rate for cheaper computation on large columns (default: ``False``).
     """
 
     def __init__(
@@ -52,30 +50,20 @@ class DistributionBased(BaseMatcher):
         process_num: int = 1,
         use_bloom_filters: bool = False,
     ):
-        """
-        Parameters
-        ----------
-        threshold1: float
-            The threshold for phase 1
-        threshold2: float
-            The threshold for phase 2
-        quantiles: int
-            the number of quantiles of the histograms
-        process_num: int
-            The number of processes to spawn
-        use_bloom_filters: bool
-            Whether to use Bloom filters for approximate intersection in phase 2.
-            When True, uses Bloom filters as described in Section 4 of the paper to
-            approximate set intersection, trading a small false positive rate for
-            reduced computation on large columns. Default is False (exact intersection).
-        """
         self.__quantiles: int = int(quantiles)
         self.__threshold1: float = float(threshold1)
         self.__threshold2: float = float(threshold2)
         self.__process_num: int = int(process_num)
         self.__use_bloom_filters: bool = bool(use_bloom_filters)
+        if self.__quantiles < 1:
+            raise ValueError(f"quantiles must be >= 1, got {self.__quantiles}")
+        if not 0.0 <= self.__threshold1 <= 1.0:
+            raise ValueError(f"threshold1 must be between 0.0 and 1.0, got {self.__threshold1}")
+        if not 0.0 <= self.__threshold2 <= 1.0:
+            raise ValueError(f"threshold2 must be between 0.0 and 1.0, got {self.__threshold2}")
+        if self.__process_num < 1:
+            raise ValueError(f"process_num must be >= 1, got {self.__process_num}")
         self.__column_names: list = []
-        self.__target_name: str = ""
 
     def get_matches(self, source_input: BaseTable, target_input: BaseTable):
         """
@@ -87,20 +75,32 @@ class DistributionBased(BaseMatcher):
         dict
             A dictionary with matches and their similarity
         """
-        self.__column_names: list = []
-        self.__target_name = target_input.name
+        table_order = {source_input.name: 0, target_input.name: 1}
+        return self.__ingest_and_match([source_input, target_input], table_order)
 
-        all_tables: list[BaseTable] = [source_input, target_input]
+    def get_matches_batch(self, tables: list[BaseTable]):
+        """
+        Override that computes global ranks from ALL tables at once, so that
+        the distribution clustering reflects the full data landscape rather
+        than only a single pair.
+        """
+        table_order = {table.name: i for i, table in enumerate(tables)}
+        return self.__ingest_and_match(tables, table_order)
+
+    def __ingest_and_match(self, tables: list[BaseTable], table_order: dict[str, int]):
+        self.__column_names = []
+
         with tempfile.TemporaryDirectory() as tmp_folder_path:
-            data = []
-            for table in all_tables:
-                for column in table.get_columns():
-                    data.extend(column.data)
-            generate_global_ranks(data, tmp_folder_path)
-            del data
+            unique_values: set = set()
+            for table in tables:
+                for column in table.get_instances_columns():
+                    unique_values.update(column.data)
+            generate_global_ranks(unique_values, tmp_folder_path)
+            del unique_values
 
             if self.__process_num == 1:
-                for table in all_tables:
+                for table in tables:
+                    columns: list[BaseColumn] = table.get_instances_columns()
                     self.__column_names.extend(
                         [
                             (
@@ -109,12 +109,11 @@ class DistributionBased(BaseMatcher):
                                 x.name,
                                 x.unique_identifier,
                             )
-                            for x in table.get_columns()
+                            for x in columns
                             if not x.is_empty
                         ]
                     )
 
-                    columns: list[BaseColumn] = table.get_columns()
                     for tup in ingestion_column_generator(
                         columns,
                         table.name,
@@ -123,10 +122,11 @@ class DistributionBased(BaseMatcher):
                         tmp_folder_path,
                     ):
                         process_columns(tup)
-                matches = self.__find_matches(tmp_folder_path)
+                matches = self.__find_matches(tmp_folder_path, table_order)
             else:
                 with get_context("spawn").Pool(self.__process_num) as process_pool:
-                    for table in all_tables:
+                    for table in tables:
+                        columns: list[BaseColumn] = table.get_instances_columns()
                         self.__column_names.extend(
                             [
                                 (
@@ -135,11 +135,10 @@ class DistributionBased(BaseMatcher):
                                     x.name,
                                     x.unique_identifier,
                                 )
-                                for x in table.get_columns()
+                                for x in columns
                                 if not x.is_empty
                             ]
                         )
-                        columns: list[BaseColumn] = table.get_columns()
                         process_pool.map(
                             process_columns,
                             ingestion_column_generator(
@@ -151,11 +150,13 @@ class DistributionBased(BaseMatcher):
                             ),
                             chunksize=1,
                         )
-                    matches = self.__find_matches_parallel(tmp_folder_path, process_pool)
+                    matches = self.__find_matches_parallel(
+                        tmp_folder_path, process_pool, table_order
+                    )
 
         return matches
 
-    def __find_matches(self, tmp_folder_path: str):
+    def __find_matches(self, tmp_folder_path: str, table_order: dict[str, int]):
         connected_components = discovery.compute_distribution_clusters(
             self.__column_names, self.__threshold1, tmp_folder_path, self.__quantiles
         )
@@ -182,9 +183,11 @@ class DistributionBased(BaseMatcher):
             results, self.__column_names
         )
 
-        return self.__rank_output(attribute_clusters, tmp_folder_path)
+        return self.__rank_output(attribute_clusters, tmp_folder_path, table_order)
 
-    def __find_matches_parallel(self, tmp_folder_path: str, pool: Pool):
+    def __find_matches_parallel(
+        self, tmp_folder_path: str, pool: Pool, table_order: dict[str, int]
+    ):
         """
         "Main" function of [1] that will calculate first the distribution clusters and then the attribute clusters
 
@@ -194,6 +197,8 @@ class DistributionBased(BaseMatcher):
             The path of the temporary folder that will serve as a cache for the run
         pool: multiprocessing.Pool
             the process pool that will be used in the algorithms 1, 2 and 3 of [1]
+        table_order: dict[str, int]
+            Mapping of table name to position index for consistent match direction
         """
         connected_components = discovery.compute_distribution_clusters_parallel(
             self.__column_names,
@@ -226,9 +231,14 @@ class DistributionBased(BaseMatcher):
             results, self.__column_names
         )
 
-        return self.__rank_output(attribute_clusters, tmp_folder_path)
+        return self.__rank_output(attribute_clusters, tmp_folder_path, table_order)
 
-    def __rank_output(self, attribute_clusters: iter, tmp_folder_path: str):
+    def __rank_output(
+        self,
+        attribute_clusters: iter,
+        tmp_folder_path: str,
+        table_order: dict[str, int],
+    ):
         """
         Take the attribute clusters that the algorithm produces and give a ranked list of matches based on the the EMD
         between each pair inside an attribute cluster . The ranked list will look like:
@@ -240,6 +250,8 @@ class DistributionBased(BaseMatcher):
             The attribute clusters
         tmp_folder_path: str
             The path of the temporary folder that will serve as a cache for the run
+        table_order: dict[str, int]
+            Mapping of table name to position index for consistent match direction
 
         Returns
         -------
@@ -266,7 +278,7 @@ class DistributionBased(BaseMatcher):
                     sim = 1 / (1 + emd)
                     tn_i, _, cn_i, _ = k[0]
                     tn_j, _, cn_j, _ = k[1]
-                    if self.__target_name == tn_i:
+                    if table_order.get(tn_i, 0) > table_order.get(tn_j, 0):
                         matches.update(Match(tn_i, cn_i, tn_j, cn_j, sim).to_dict)
                     else:
                         matches.update(Match(tn_j, cn_j, tn_i, cn_i, sim).to_dict)
