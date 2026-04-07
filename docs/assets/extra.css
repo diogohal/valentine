@@ -1,0 +1,228 @@
+/* ============================================================================
+ * Valentine — stylistic overrides on top of the Zensical base theme.
+ * ========================================================================= */
+
+/* --- Warmer pink primary ------------------------------------------------- */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #e91e63;
+  --md-primary-fg-color--light: #f06292;
+  --md-primary-fg-color--dark:  #ad1457;
+  --md-accent-fg-color:         #ff4081;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #f06292;
+  --md-primary-fg-color--light: #f8bbd0;
+  --md-primary-fg-color--dark:  #c2185b;
+  --md-accent-fg-color:         #ff80ab;
+  --md-hue: 330;
+}
+
+/* --- Header with a subtle gradient --------------------------------------- */
+.md-header,
+.md-tabs {
+  background: linear-gradient(
+    135deg,
+    var(--md-primary-fg-color--dark) 0%,
+    var(--md-primary-fg-color) 55%,
+    var(--md-primary-fg-color--light) 100%
+  );
+  color: #ffffff;
+}
+
+/* Force readable white text on the gradient bar for both schemes */
+.md-header,
+.md-header a,
+.md-header button,
+.md-header label,
+.md-header__title,
+.md-header__topic,
+.md-tabs,
+.md-tabs a,
+.md-tabs__link,
+.md-tabs__item {
+  color: #ffffff;
+}
+
+.md-header .md-search__input,
+.md-header .md-search__input::placeholder {
+  color: #ffffff;
+}
+
+.md-header .md-search__input {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+.md-header .md-search__input::placeholder {
+  opacity: 0.85;
+}
+
+/* Hovered / active tab indicator */
+.md-tabs__link {
+  opacity: 0.78;
+  transition: opacity 0.15s ease;
+}
+
+.md-tabs__link:hover,
+.md-tabs__link--active,
+.md-tabs__item--active .md-tabs__link {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.md-header__title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* --- Typography tightening ----------------------------------------------- */
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2em;
+}
+
+/* --- Hero block on the landing page -------------------------------------- */
+.valentine-hero {
+  text-align: center;
+  padding: 2.5rem 1rem 1.5rem;
+  margin-bottom: 2rem;
+  border-radius: 0.75rem;
+  background: linear-gradient(
+    135deg,
+    rgba(233, 30, 99, 0.08) 0%,
+    rgba(255, 64, 129, 0.04) 100%
+  );
+}
+
+[data-md-color-scheme="slate"] .valentine-hero {
+  background: linear-gradient(
+    135deg,
+    rgba(240, 98, 146, 0.12) 0%,
+    rgba(255, 128, 171, 0.06) 100%
+  );
+}
+
+.valentine-hero-logo {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  margin-right: 0.2em;
+  filter: drop-shadow(0 2px 6px rgba(233, 30, 99, 0.25));
+}
+
+.valentine-hero h1 {
+  font-size: 3rem;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.valentine-hero .valentine-tagline {
+  font-size: 1.15rem;
+  color: var(--md-default-fg-color);
+  opacity: 0.85;
+  margin-bottom: 1.5rem;
+}
+
+.valentine-hero .valentine-badges {
+  margin: 1.25rem 0 0.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.valentine-hero .valentine-badges img {
+  height: 16px;
+}
+
+.valentine-hero .md-button {
+  margin: 0.25rem 0.35rem;
+}
+
+/* --- Inline algorithm "chips" -------------------------------------------- */
+.valentine-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 0.5rem 0 1.5rem;
+}
+
+.valentine-chips a {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: var(--md-primary-fg-color--light);
+  color: #fff !important;
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.valentine-chips a:hover {
+  background: var(--md-primary-fg-color);
+  transform: translateY(-1px);
+}
+
+/* --- Grid cards: lift on hover ------------------------------------------- */
+.md-typeset .grid.cards > :is(ul, ol) > li,
+.md-typeset .grid > .card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.md-typeset .grid.cards > :is(ul, ol) > li:hover,
+.md-typeset .grid > .card:hover {
+  transform: translateY(-3px);
+  border-color: var(--md-primary-fg-color--light);
+  box-shadow: 0 6px 20px rgba(233, 30, 99, 0.12);
+}
+
+/* --- 404 page ------------------------------------------------------------ */
+.valentine-404 {
+  text-align: center;
+  padding: 3rem 1rem 2rem;
+  max-width: 38rem;
+  margin: 0 auto;
+}
+
+.valentine-404-logo {
+  width: 140px;
+  height: auto;
+  margin-bottom: 1.5rem;
+  filter: drop-shadow(0 4px 16px rgba(233, 30, 99, 0.25));
+}
+
+.valentine-404 h1 {
+  font-size: 2rem;
+  margin: 0 0 0.5rem;
+}
+
+.valentine-404-tagline {
+  font-size: 1.05rem;
+  opacity: 0.85;
+  margin-bottom: 1.5rem;
+}
+
+.valentine-404 .md-button {
+  margin: 0.25rem 0.35rem;
+}
+
+.valentine-404-hint {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+/* --- Code blocks: a touch more breathing room ---------------------------- */
+.md-typeset pre > code {
+  padding: 1em 1.2em;
+}
