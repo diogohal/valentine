@@ -13,22 +13,27 @@ existing Levenshtein-based matcher.
 import math
 import re
 
-from jellyfish import levenshtein_distance
+from rapidfuzz.distance import Levenshtein
 
-from ...utils.utils import normalize_distance
+_TOKEN_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
 
 def _camel_case_split(s: str) -> list[str]:
-    """Split a CamelCase string into tokens.
+    """Split a name into word tokens.
+
+    Handles CamelCase, PascalCase, snake_case, SCREAMING_SNAKE,
+    hyphen-separated, and digit boundaries.
 
     Examples:
-        "ColumnType" -> ["Column", "Type"]
-        "DeptName"   -> ["Dept", "Name"]
-        "EmpNo"      -> ["Emp", "No"]
-        "Pname"      -> ["Pname"]
-        "date"       -> ["date"]
+        "ColumnType"      -> ["Column", "Type"]
+        "dept_name"       -> ["dept", "name"]
+        "EMPLOYEE_ID"     -> ["EMPLOYEE", "ID"]
+        "first-name"      -> ["first", "name"]
+        "XMLParser"       -> ["XML", "Parser"]
+        "order123"        -> ["order", "123"]
     """
-    return re.sub(r"([a-z])([A-Z])", r"\1 \2", s).split()
+    tokens = _TOKEN_RE.findall(s)
+    return tokens if tokens else [s] if s else []
 
 
 def _word_prefix_suffix_sim(w1: str, w2: str) -> float:
@@ -143,7 +148,7 @@ def compute_idf_weights(node_names: list[str]) -> dict[str, float]:
     the number of names containing the token.
 
     Args:
-        node_names: List of non-NodeID node names from both graphs.
+        node_names: List of non-structural node names from both graphs.
 
     Returns:
         Dict mapping lowercase token to its IDF weight.
@@ -162,5 +167,9 @@ def compute_idf_weights(node_names: list[str]) -> dict[str, float]:
 
 
 def levenshtein_sim(s1: str, s2: str) -> float:
-    """Levenshtein-based similarity (valentine's original matcher)."""
-    return normalize_distance(levenshtein_distance(s1, s2), s1, s2)
+    """Levenshtein-based similarity (valentine's original matcher).
+
+    Uses rapidfuzz's C++ implementation, whose ``normalized_similarity``
+    is identical to the previous ``1 - distance / max(len1, len2)`` form.
+    """
+    return Levenshtein.normalized_similarity(s1, s2)

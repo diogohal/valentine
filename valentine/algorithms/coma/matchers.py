@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .combination import average, maximum, set_average
+from .combination import maximum, set_average
 from .schema import SchemaElement, SchemaGraph
-from .similarity.datatype import datatype_similarity
 from .similarity.tfidf import TfidfCorpus, tfidf_similarity
+from .similarity.tokens import tokens_similarity
 from .similarity.trigram import trigram_similarity
 
 # ---------------------------------------------------------------------------
@@ -16,16 +16,6 @@ from .similarity.trigram import trigram_similarity
 
 def extract_name(elem: SchemaElement) -> str:
     return elem.name
-
-
-def extract_datatype(elem: SchemaElement) -> str:
-    return elem.data_type
-
-
-def extract_path(elem: SchemaElement) -> str:
-    # Java's RES3_PATH calls path.toNameString().replace(".", " ")
-    # converting "root.column" into "root column" before trigram matching
-    return elem.accession.replace(".", " ")
 
 
 def extract_instances_direct(elem: SchemaElement) -> list[str]:
@@ -44,24 +34,6 @@ def extract_instances_all(elem: SchemaElement) -> list[str]:
 
 def ctx_selfnode(elem: SchemaElement, _graph: SchemaGraph) -> list[SchemaElement]:
     return [elem]
-
-
-def ctx_selfpath(elem: SchemaElement, _graph: SchemaGraph) -> list[SchemaElement]:
-    # The element's accession already IS the full path string (e.g. "table.column"),
-    # so returning [elem] is equivalent to returning [path] for RES3_PATH extraction.
-    return [elem]
-
-
-def ctx_leaves(elem: SchemaElement, graph: SchemaGraph) -> list[SchemaElement]:
-    return graph.get_leaves(elem)
-
-
-def ctx_parents(elem: SchemaElement, graph: SchemaGraph) -> list[SchemaElement]:
-    return graph.get_parents(elem)
-
-
-def ctx_siblings(elem: SchemaElement, graph: SchemaGraph) -> list[SchemaElement]:
-    return graph.get_siblings(elem)
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +61,7 @@ class Matcher:
 
 # Predefined matchers
 NAME_MATCHER = Matcher("Name", extract_name, trigram_similarity, set_average)
-DATATYPE_MATCHER = Matcher("Datatype", extract_datatype, datatype_similarity, set_average)
-PATH_MATCHER = Matcher("Path", extract_path, trigram_similarity, set_average)
+TOKENS_MATCHER = Matcher("Tokens", extract_name, tokens_similarity, set_average)
 INSTANCES_DIRECT_MATCHER = Matcher(
     "InstancesDirect", extract_instances_direct, tfidf_similarity, set_average
 )
@@ -151,29 +122,15 @@ class ComplexMatcher:
         return self.set_combination(sim_matrix)
 
 
-# Predefined complex matchers
-NAME_CM = ComplexMatcher("NameCM", ctx_selfnode, [NAME_MATCHER], average, set_average)
-PATH_CM = ComplexMatcher("PathCM", ctx_selfpath, [PATH_MATCHER], average, set_average)
-LEAVES_CM = ComplexMatcher("LeavesCM", ctx_leaves, [NAME_MATCHER], average, set_average)
-PARENTS_CM = ComplexMatcher("ParentsCM", ctx_parents, [LEAVES_CM], average, set_average)
-SIBLINGS_CM = ComplexMatcher("SiblingsCM", ctx_siblings, [LEAVES_CM], average, set_average)
-INSTANCES_CM = ComplexMatcher(
-    "InstancesCM",
-    ctx_selfnode,
-    [INSTANCES_DIRECT_MATCHER, INSTANCES_ALL_MATCHER],
-    maximum,
-    set_average,
+# NameCM aggregates trigram ("Name") and token Dice ("Tokens") by
+# maximum: trigram handles the well-formed cases while tokens rescues
+# camelCase/abbreviated columns where the raw trigram score is weak
+# (e.g. ``ApproxDate`` <-> ``date_created_approximation``). Using max
+# rather than average keeps the matcher's scale comparable to the
+# original NAME_CM so downstream averaging and selection are unchanged.
+NAME_CM = ComplexMatcher(
+    "NameCM", ctx_selfnode, [NAME_MATCHER, TOKENS_MATCHER], maximum, set_average
 )
-
-# ---------------------------------------------------------------------------
-# Strategy configurations
-# ---------------------------------------------------------------------------
-
-# COMA_OPT: schema-only matching
-COMA_OPT_MATCHERS = [NAME_CM, PATH_CM, LEAVES_CM, PARENTS_CM]
-
-# COMA_OPT_INST: schema + instance matching (local per-pair IDF fallback)
-COMA_OPT_INST_MATCHERS = [NAME_CM, PATH_CM, INSTANCES_CM, LEAVES_CM, PARENTS_CM]
 
 
 def make_instance_matchers(corpus: TfidfCorpus) -> ComplexMatcher:
@@ -193,12 +150,16 @@ def build_matchers(
     use_schema: bool = True,
     use_instances: bool = False,
 ) -> list[ComplexMatcher]:
-    """Build the list of complex matchers based on the requested configuration."""
+    """Build the list of complex matchers based on the requested configuration.
+
+    For flat tabular schemas (DataFrame input), only NAME_CM and
+    InstancesCM are meaningful. The original COMA matchers for
+    path, leaves, parents, and siblings are designed for nested XML
+    schemas and are redundant or constant in two-level schemata.
+    """
     matchers: list[ComplexMatcher] = []
     if use_schema:
-        matchers.extend([NAME_CM, PATH_CM])
+        matchers.append(NAME_CM)
     if use_instances and corpus is not None:
         matchers.append(make_instance_matchers(corpus))
-    if use_schema:
-        matchers.extend([LEAVES_CM, PARENTS_CM])
     return matchers
