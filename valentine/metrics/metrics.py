@@ -231,9 +231,12 @@ class PersistentAccuracy(Metric):
     """
 
     def apply(self, matches: Any, ground_truth: GroundTruth) -> dict[str, float]:
-        persistent_cols = {src for src, tgt in ground_truth if src == tgt}
+        # All ground-truth pairs are persistent mappings (src -> tgt).
+        # We do NOT assume src == tgt because target columns may have been
+        # renamed before matching.
+        persistent_pairs = list(ground_truth)
 
-        total = len(persistent_cols)
+        total = len(persistent_pairs)
         if total == 0:
             return self.return_format(-1.0)
 
@@ -241,7 +244,7 @@ class PersistentAccuracy(Metric):
         predicted_pairs = {(key.source_column, key.target_column) for key in matches}
 
         correct = sum(
-            1 for col in persistent_cols if (col, col) in predicted_pairs
+            1 for src, tgt in persistent_pairs if (src, tgt) in predicted_pairs
         )
         return self.return_format(_safe_div(correct, total))
 
