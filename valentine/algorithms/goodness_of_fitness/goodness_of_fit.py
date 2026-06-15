@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 import numpy as np
 from multiprocessing import shared_memory
 import multiprocessing as mp
@@ -94,8 +94,14 @@ class GoodnessOfFit(BaseMatcher):
         results = []
         for i, col1 in enumerate(base_cols):
             for j, col2 in enumerate(new_cols):
-                nuniq1 = len(np.unique(base_data[:, i]))
-                nuniq2 = len(np.unique(new_data[:, j]))
+                try:
+                    # Convert to string for counting unique values (handles mixed types)
+                    data1_str = np.array([str(x) for x in base_data[:, i]], dtype=object)
+                    data2_str = np.array([str(x) for x in new_data[:, j]], dtype=object)
+                    nuniq1 = len(np.unique(data1_str))
+                    nuniq2 = len(np.unique(data2_str))
+                except Exception:
+                    continue
 
                 if nuniq1 < 2:
                     break
@@ -105,15 +111,33 @@ class GoodnessOfFit(BaseMatcher):
                 data1 = base_data[:, i]
                 data2 = new_data[:, j]
 
+                # Check if data is numeric or boolean
+                is_numeric1 = self.is_numeric_or_boolean(data1)
+                is_numeric2 = self.is_numeric_or_boolean(data2)
+
                 try:
-                    data1 = data1.astype(float)
-                    data2 = data2.astype(float)
+                    # If both are numeric, convert directly
+                    if is_numeric1 and is_numeric2:
+                        data1 = data1.astype(float)
+                        data2 = data2.astype(float)
+                    # If both are non-numeric, encode categorical values
+                    elif not is_numeric1 and not is_numeric2:
+                        data1, data2 = self.encode_categorical_column(data1, data2)
+                    # If one is numeric and other is not, try to convert or skip
+                    else:
+                        data1 = data1.astype(float)
+                        data2 = data2.astype(float)
                 except ValueError:
-                    print(f"Skipping comparison due to non-numeric data.")
+                    print(f"Skipping comparison due to conversion error.")
                     continue      
                 if nuniq1 <= delimiter and nuniq2 <= delimiter:
-                    uniq1 = np.unique(data1)
-                    uniq2 = np.unique(data2)
+                    try:
+                        uniq1 = np.unique(data1)
+                        uniq2 = np.unique(data2)
+                    except TypeError:
+                        # If unique fails, convert to string
+                        uniq1 = np.unique(np.array([str(x) for x in data1], dtype=object))
+                        uniq2 = np.unique(np.array([str(x) for x in data2], dtype=object))
 
                     if len(np.intersect1d(uniq1, uniq2)) < 2:
                         continue
@@ -183,6 +207,76 @@ class GoodnessOfFit(BaseMatcher):
 
         return truncated_results
 
+    @staticmethod
+    def encode_categorical_column(data1: np.ndarray, data2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Encode non-numeric and non-boolean columns by mapping unique values to integers.
+        
+        Combines unique values from both columns, sorts them, and assigns integer codes (1, 2, 3, ...).
+        Each column is then encoded using the combined mapping.
+        
+        Parameters
+        ----------
+        data1 : np.ndarray
+            First column data
+        data2 : np.ndarray
+            Second column data
+            
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            Encoded versions of data1 and data2
+        """
+        try:
+            # Convert to string to handle mixed types
+            data1_str = np.array([str(x) for x in data1], dtype=object)
+            data2_str = np.array([str(x) for x in data2], dtype=object)
+            
+            # Get unique values from both columns
+            uniq1 = np.unique(data1_str)
+            uniq2 = np.unique(data2_str)
+            
+            # Combine and get sorted unique values
+            combined_uniq = np.unique(np.concatenate([uniq1, uniq2]))
+            
+            # Create mapping: value -> code (starting from 1)
+            value_to_code = {val: code for code, val in enumerate(combined_uniq, start=1)}
+            
+            # Apply mapping to both columns
+            encoded_data1 = np.array([value_to_code[str(val)] for val in data1], dtype=float)
+            encoded_data2 = np.array([value_to_code[str(val)] for val in data2], dtype=float)
+            
+            return encoded_data1, encoded_data2
+        except Exception as e:
+            # If encoding fails, return original data as float
+            print(f"Warning: Failed to encode categorical data: {e}")
+            try:
+                return np.array([float(x) if x is not None else 0.0 for x in data1], dtype=float), \
+                       np.array([float(x) if x is not None else 0.0 for x in data2], dtype=float)
+            except:
+                return data1.astype(float), data2.astype(float)
+
+    @staticmethod
+    def is_numeric_or_boolean(arr: np.ndarray) -> bool:
+        """
+        Check if an array contains numeric or boolean data.
+        
+        Parameters
+        ----------
+        arr : np.ndarray
+            Array to check
+            
+        Returns
+        -------
+        bool
+            True if array is numeric or boolean, False otherwise
+        """
+        if arr.dtype.kind in ['b']:  # boolean
+            return True
+        if arr.dtype.kind in ['i', 'u', 'f']:  # integer, unsigned, float
+            return True
+        return False
+
 
     # ---------- Parallel matching functions ----------
     @staticmethod
@@ -201,9 +295,12 @@ class GoodnessOfFit(BaseMatcher):
                 col2 = new_cols[j]
 
                 try:
-                    nuniq1 = len(np.unique(base_arr[:, i]))
-                    nuniq2 = len(np.unique(new_arr[:, j]))
-                except ValueError:
+                    # Convert to string for counting unique values (handles mixed types)
+                    data1_str = np.array([str(x) for x in base_arr[:, i]], dtype=object)
+                    data2_str = np.array([str(x) for x in new_arr[:, j]], dtype=object)
+                    nuniq1 = len(np.unique(data1_str))
+                    nuniq2 = len(np.unique(data2_str))
+                except Exception:
                     continue
 
                 if nuniq1 < 2:
@@ -211,20 +308,47 @@ class GoodnessOfFit(BaseMatcher):
                 elif nuniq2 < 2:
                     continue
 
+                data1 = base_arr[:, i]
+                data2 = new_arr[:, j]
+
+                # Check if data is numeric or boolean
+                is_numeric1 = GoodnessOfFit.is_numeric_or_boolean(data1)
+                is_numeric2 = GoodnessOfFit.is_numeric_or_boolean(data2)
+
+                try:
+                    # If both are numeric, convert directly
+                    if is_numeric1 and is_numeric2:
+                        data1 = data1.astype(float)
+                        data2 = data2.astype(float)
+                    # If both are non-numeric, encode categorical values
+                    elif not is_numeric1 and not is_numeric2:
+                        data1, data2 = GoodnessOfFit.encode_categorical_column(data1, data2)
+                    # If one is numeric and other is not, try to convert or skip
+                    else:
+                        data1 = data1.astype(float)
+                        data2 = data2.astype(float)
+                except ValueError:
+                    continue
+
                 if nuniq1 <= delimiter and nuniq2 <= delimiter:
-                    uniq1 = np.unique(base_arr[:, i])
-                    uniq2 = np.unique(new_arr[:, j])
+                    try:
+                        uniq1 = np.unique(data1)
+                        uniq2 = np.unique(data2)
+                    except TypeError:
+                        # If unique fails, convert to string
+                        uniq1 = np.unique(np.array([str(x) for x in data1], dtype=object))
+                        uniq2 = np.unique(np.array([str(x) for x in data2], dtype=object))
 
                     if len(np.intersect1d(uniq1, uniq2)) < 2:
                         continue
-                    res = chisq_test(base_arr[:, i], new_arr[:, j])
+                    res = chisq_test(data1, data2)
                     results.append([dist1, dist2, col1, col2, 'CHISQ', res.statistic, res.pvalue])
-                    res = g_test(base_arr[:, i], new_arr[:, j])
+                    res = g_test(data1, data2)
                     results.append([dist1, dist2, col1, col2, 'G', res.statistic, res.pvalue])
                 elif nuniq1 > delimiter and nuniq2 > delimiter:
-                    res = ks_test(base_arr[:, i], new_arr[:, j], hist_bin)
+                    res = ks_test(data1, data2, hist_bin)
                     results.append([dist1, dist2, col1, col2, 'KS', res.statistic, res.pvalue])
-                    res = ad_test(base_arr[:, i], new_arr[:, j], hist_bin)
+                    res = ad_test(data1, data2, hist_bin)
                     results.append([dist1, dist2, col1, col2, 'AD', res.statistic, res.pvalue])
         if result_list is not None:
             result_list.extend(results)

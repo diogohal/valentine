@@ -25,6 +25,7 @@ DATA_DIR = Path("/home/exati/Facul/tcc/datasets/escola_agregado/cleaned")
 OUTPUT_DIR = Path("/home/exati/Facul/tcc/results/escola_agregada")
 START_YEAR = 2007
 END_YEAR = 2023  # inclusive; compares END_YEAR with END_YEAR+1
+TARGET_COLUMN_ORDER_SEED = 42
 
 def build_random_column_name(existing_names, size=5):
 	while True:
@@ -38,6 +39,17 @@ def build_random_3digit_suffix_column_name(base_name, existing_names):
 		candidate = f"{base_name}{random.randint(0, 999):03d}"
 		if candidate not in existing_names:
 			return candidate
+
+
+def reorder_columns_deterministically(df_target, seed=TARGET_COLUMN_ORDER_SEED):
+    columns = list(df_target.columns)
+    if len(columns) <= 1:
+        return df_target
+
+    rng = random.Random(seed)
+    reordered_columns = columns[:]
+    rng.shuffle(reordered_columns)
+    return df_target.loc[:, reordered_columns]
 
 
 def transform_target_column_names(
@@ -113,6 +125,10 @@ def process_year_pair(year: int, matcher, sample_size: int = None, args=None) ->
 
     ground_truth = [(col, col) for col in persisted_columns]
 
+    if args and args.reorder_target_columns:
+        print(f"Reordering target columns deterministically with seed {TARGET_COLUMN_ORDER_SEED}")
+        df2 = reorder_columns_deterministically(df2, seed=TARGET_COLUMN_ORDER_SEED)
+
     if args and args.target_column_transform != "none":
         print(f'Transforming target column names using strategy: {args.target_column_transform}')
         df2, ground_truth, persisted_columns, new_columns = transform_target_column_names(
@@ -124,7 +140,7 @@ def process_year_pair(year: int, matcher, sample_size: int = None, args=None) ->
     print(f"[{year} -> {year_next}] Running matcher ({algo_name})...")
     max_size = max(len(df1), len(df2))
     start_time = time.time()
-    matches = valentine_match([df1, df2], matcher, instance_sample_size=max_size).take_top_n_per_source(10)
+    matches = valentine_match([df1, df2], matcher, instance_sample_size=None).take_top_n_per_source(10)
     elapsed = time.time() - start_time
     print(f"[{year} -> {year_next}] Matching time: {elapsed:.2f}s | pairs found: {len(matches)}")
 
@@ -210,6 +226,11 @@ def main():
 		choices=["none", "reverse", "random5", "suffix_random3"],
 		help="Transformation strategy for target column names.",
 	)
+    parser.add_argument(
+        "--reorder_target_columns",
+        action="store_true",
+        help="Reorder target columns deterministically using seed 42.",
+    )
 	
     args = parser.parse_args()
 
@@ -226,8 +247,7 @@ def main():
 
     sample_sizes = [None]
     for sample_size in sample_sizes:
-        results_filename = OUTPUT_DIR / f"resultado_escola_total_{START_YEAR}_{END_YEAR + 1}_{algo_name}.csv"
-        # Remove existing file so we start fresh
+        results_filename = OUTPUT_DIR / f"resultado_escola_{sample_size}_{START_YEAR}_{END_YEAR + 1}_{algo_name}.csv"
         results_filename.unlink(missing_ok=True)
         for year in range(START_YEAR, END_YEAR + 1):
             row = process_year_pair(year=year, matcher=matcher, sample_size=sample_size, args=args)
